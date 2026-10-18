@@ -36,15 +36,14 @@ That is about 62 slides, or roughly 75 GB downloaded one at a time. Every number
 
 ```bash
 pip install -r requirements-laptop.txt
-python -m brainpath.select_pilot annotations.csv --slide-col <slide column> --type-col <diagnosis column>
+python -m brainpath.select_pilot annotations.csv --slide-col uuid --type-col diagnosis --k-common 5
 ```
 
-If you get a column name wrong, the script lists the available columns. Add `--exclude "<control type name>"` to skip control tissue. The output is `pilot_slides.csv`.
+If you get a column name wrong, the script lists the available columns. Control slides have no diagnosis, so they are skipped automatically. The output is `pilot_slides.csv`.
 
-Then add one column to `pilot_slides.csv` so the extractor can find each slide:
+The extractor finds each slide on EBRAINS from its `uuid` and diagnosis (the atlas stores them as `v1.0/<diagnosis>/<uuid>.ndpi`), so no download links are needed. It logs in with your EBRAINS access token in `EBRAINS_TOKEN`. Test the token on one slide with `python -m brainpath.ebrains pilot_slides.csv`.
 
-- `url`: a direct download link per slide from EBRAINS. If the links need a login token, set it as `EBRAINS_TOKEN`.
-- or `path`: a slide file you already downloaded.
+To use other sources instead, add a `url` column (a direct download link) or a `path` column (a slide file already on disk).
 
 ## 2. Extract features (Kaggle)
 
@@ -71,6 +70,20 @@ This compares a mean-pooling baseline with attention-based MIL and writes:
 
 With about 60 slides, treat the numbers as a feasibility check, not a result.
 
+### Unseen-type detection
+
+```bash
+python -m brainpath.openset features/ --out results/openset/
+```
+
+This hides each rare and held-out type in turn, fits a detector on the remaining (known) types, and compares five unseen scores: classifier confidence, energy, Mahalanobis distance, nearest-neighbour distance and prototype similarity. It writes:
+
+- `openset_summary.csv`: one row per score with AUROC, false alarms at 95% detection, and the share of unseen slides caught at a threshold set from known slides only (mean and spread over rotations)
+- `openset_scores.csv`: every slide's scores in every rotation
+- `openset_rotations.json`: the full metrics per rotation
+
+Use `--rotate all` to also hide each common type once, or `--rotate heldout` for the single held-out split.
+
 ## Tests
 
 ```bash
@@ -86,9 +99,11 @@ The tests use synthetic data and a stand-in for Virchow, so they need no downloa
 brainpath/
   select_pilot.py   pick common, rare and held-out slides
   tiling.py         tissue detection and 224 px tiles at 0.5 um/px (20x)
+  ebrains.py        find and fetch atlas slides on the EBRAINS data proxy
   extract.py        download, Virchow v1 features, delete
   prism_report.py   PRISM draft reports
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores
+  openset.py        unseen-type detection: five scores, rotating hidden types, thresholds
 notebooks/
   kaggle_extract.ipynb
 tests/

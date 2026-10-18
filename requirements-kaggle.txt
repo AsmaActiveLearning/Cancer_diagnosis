@@ -1,0 +1,13 @@
+# Virchow v1 feature extraction
+timm>=0.9.11
+huggingface_hub
+openslide-python
+openslide-bin
+requests
+pandas
+pillow
+# PRISM (versions from its model card)
+transformers~=4.53.0
+einops==0.8.0
+environs==11.0.0
+sacremoses==0.1.1
