@@ -56,7 +56,19 @@ python -m brainpath.prism_report features/ --out results/prism_reports.csv
 
 The extractor skips slides that are already done, so you can stop and restart it. Download the `features/` folder at the end.
 
-## 3. Train and evaluate (laptop)
+## 3. Explore the embeddings (laptop)
+
+Before training, look at what Virchow already captures. Unzip the Kaggle outputs into the repo folder, so the `.pt` files sit in `features/`, then open `notebooks/explore_embeddings.ipynb` in VS Code and run it cell by cell. It shows:
+
+- PCA explained variance, and PCA and UMAP maps of the slides
+- cosine similarity between slides, ordered by type
+- separability: silhouette, nearest-neighbour accuracy, and how far held-out slides sit from known ones
+- confounders: whether the main directions follow tile count, tissue area or age
+- tile clusters shared across types, and a tile map per slide
+
+To save every figure and table to a folder without the notebook, run `python -m brainpath.explore features/ --out results/explore/`.
+
+## 4. Train and evaluate (laptop)
 
 ```bash
 python -m brainpath.train features/ --out results/
@@ -102,9 +114,11 @@ brainpath/
   ebrains.py        find and fetch atlas slides on the EBRAINS data proxy
   extract.py        download, Virchow v1 features, delete
   prism_report.py   PRISM draft reports
+  explore.py        PCA, UMAP, similarity, separability and tile clusters
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores
   openset.py        unseen-type detection: five scores, rotating hidden types, thresholds
 notebooks/
   kaggle_extract.ipynb
+  explore_embeddings.ipynb
 tests/
 ```

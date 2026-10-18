@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pandas as pd
 import pytest
@@ -167,3 +168,29 @@ def test_extract_fetches_from_ebrains_without_url_column(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         extract.main()
     assert calls == ["v1.0/Haemangioblastoma/u1.ndpi", ("https://signed/x", False)]
+
+
+def test_explore_runs_on_synthetic_features(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from brainpath import explore
+
+    rng = np.random.default_rng(1)
+    feat_dir = tmp_path / "features"
+    feat_dir.mkdir()
+    for s in synthetic_slides(dim=24):
+        n = len(s["features"])
+        coords = np.stack(np.meshgrid(np.arange(10), np.arange(5)), -1).reshape(-1, 2)[:n] * 224
+        torch.save({"features": s["features"].half(), "coords": torch.from_numpy(coords).int(),
+                    "slide_id": s["slide_id"], "tumour_type": s["tumour_type"], "role": s["role"],
+                    "meta": {"pat_id": s["patient"], "age": float(rng.integers(5, 80)),
+                             "tissue_area": float(rng.uniform(5, 100))}}, feat_dir / f"{s['slide_id']}.pt")
+    monkeypatch.setattr("sys.argv", ["explore", str(feat_dir), "--out", str(tmp_path / "out"), "--clusters", "4"])
+    explore.main()
+
+    out = tmp_path / "out"
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["slides"] == 28 and summary["known_1nn_accuracy"] > 0.9
+    assert summary["nearest_known_sim_heldout"] < summary["nearest_known_sim_known"]
+    for name in ("pca_variance.png", "map_pca.png", "similarity.png", "nearest_known.png", "tile_clusters.png"):
+        assert (out / name).exists()
+    assert len(list(out.glob("tilemap_*.png"))) == 6
