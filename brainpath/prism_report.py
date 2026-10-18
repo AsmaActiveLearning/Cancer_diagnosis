@@ -41,6 +41,7 @@ def main():
                              num_beams=args.num_beams, num_beam_groups=1)
         report = model.untokenize(ids)
         report = report[0] if isinstance(report, (list, tuple)) else report
+        report = report.replace("</s>", "").strip()  # drop BioGPT start/end tokens
         rows.append({"slide_id": d["slide_id"], "tumour_type": d["tumour_type"], "role": d["role"],
                      "n_tiles": tiles.shape[1], "prism_report": report})
         print(f"{d['slide_id']} ({d['tumour_type']}): {report}")
