@@ -3,7 +3,9 @@
 Runs on a GPU machine (Kaggle or Colab). Only one slide is on disk at a time,
 and each saved feature file is a few tens of MB.
 
-The manifest is pilot_slides.csv from select_pilot, plus either:
+The manifest is pilot_slides.csv from select_pilot. By default each slide is
+fetched from the EBRAINS atlas by its uuid and diagnosis (set EBRAINS_TOKEN;
+see brainpath/ebrains.py). Optional columns override that:
   url  - a download link for the slide (sent with EBRAINS_TOKEN as a bearer token if set), or
   path - a slide file already on disk (kept, not deleted).
 
@@ -20,6 +22,7 @@ from pathlib import Path
 import pandas as pd
 import torch
 
+from brainpath import ebrains
 from brainpath.tiling import SlideTiler
 
 VIRCHOW_ID = "hf-hub:paige-ai/Virchow"
@@ -53,11 +56,11 @@ def embed_slide(tiler, model, transform, device, batch_size=64):
     return torch.cat(feats).half()
 
 
-def download(url, dest):
+def download(url, dest, auth=True):
     import requests
 
     headers = {}
-    if os.environ.get("EBRAINS_TOKEN"):
+    if auth and os.environ.get("EBRAINS_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['EBRAINS_TOKEN']}"
     with requests.get(url, headers=headers, stream=True, timeout=60) as r:
         r.raise_for_status()
@@ -76,8 +79,6 @@ def main():
     args = p.parse_args()
 
     manifest = pd.read_csv(args.manifest)
-    if "url" not in manifest.columns and "path" not in manifest.columns:
-        raise SystemExit("manifest needs a 'url' or a 'path' column")
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -100,7 +101,11 @@ def main():
             if not local.endswith(".ndpi"):
                 local += ".ndpi"
             t0 = time.time()
-            download(row.url, local)
+            url = getattr(row, "url", None)
+            if isinstance(url, str) and url:
+                download(url, local)
+            else:  # signed links expire, so ask for one just before each download
+                download(ebrains.signed_url(ebrains.object_name(row.tumour_type, slide_id)), local, auth=False)
             print(f"[{n}/{len(manifest)}] {slide_id}: downloaded in {time.time() - t0:.0f}s")
 
         try:

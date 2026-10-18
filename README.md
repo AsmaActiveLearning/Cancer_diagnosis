@@ -36,15 +36,14 @@ That is about 62 slides, or roughly 75 GB downloaded one at a time. Every number
 
 ```bash
 pip install -r requirements-laptop.txt
-python -m brainpath.select_pilot annotations.csv --slide-col <slide column> --type-col <diagnosis column>
+python -m brainpath.select_pilot annotations.csv --slide-col uuid --type-col diagnosis --k-common 5
 ```
 
-If you get a column name wrong, the script lists the available columns. Add `--exclude "<control type name>"` to skip control tissue. The output is `pilot_slides.csv`.
+If you get a column name wrong, the script lists the available columns. Control slides have no diagnosis, so they are skipped automatically. The output is `pilot_slides.csv`.
 
-Then add one column to `pilot_slides.csv` so the extractor can find each slide:
+The extractor finds each slide on EBRAINS from its `uuid` and diagnosis (the atlas stores them as `v1.0/<diagnosis>/<uuid>.ndpi`), so no download links are needed. It logs in with your EBRAINS access token in `EBRAINS_TOKEN`. Test the token on one slide with `python -m brainpath.ebrains pilot_slides.csv`.
 
-- `url`: a direct download link per slide from EBRAINS. If the links need a login token, set it as `EBRAINS_TOKEN`.
-- or `path`: a slide file you already downloaded.
+To use other sources instead, add a `url` column (a direct download link) or a `path` column (a slide file already on disk).
 
 ## 2. Extract features (Kaggle)
 
@@ -100,6 +99,7 @@ The tests use synthetic data and a stand-in for Virchow, so they need no downloa
 brainpath/
   select_pilot.py   pick common, rare and held-out slides
   tiling.py         tissue detection and 224 px tiles at 0.5 um/px (20x)
+  ebrains.py        find and fetch atlas slides on the EBRAINS data proxy
   extract.py        download, Virchow v1 features, delete
   prism_report.py   PRISM draft reports
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores

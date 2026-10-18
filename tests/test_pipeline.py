@@ -141,3 +141,29 @@ def test_openset_rotation_separates_unseen_types(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["openset", str(tmp_path), "--out", str(tmp_path / "out"), "--folds", "3"])
     openset.main()
     assert (tmp_path / "out" / "openset_summary.csv").exists()
+
+
+def test_ebrains_object_name_matches_atlas_layout():
+    from brainpath.ebrains import object_name
+
+    assert (object_name("Glioblastoma, IDH-wildtype", "a194f783-357f-11eb-9ee2-001a7dda7111")
+            == "v1.0/Glioblastoma, IDH-wildtype/a194f783-357f-11eb-9ee2-001a7dda7111.ndpi")
+    assert object_name("X", "s.ndpi") == "v1.0/X/s.ndpi"
+
+
+def test_extract_fetches_from_ebrains_without_url_column(tmp_path, monkeypatch):
+    from brainpath import ebrains, extract
+
+    calls = []
+    monkeypatch.setattr(ebrains, "signed_url", lambda obj: calls.append(obj) or "https://signed/x")
+    def fake_download(url, dest, auth=True):
+        calls.append((url, auth))
+        raise RuntimeError("stop after download")
+    monkeypatch.setattr(extract, "download", fake_download)
+    monkeypatch.setattr(extract, "load_virchow", lambda device: (None, None))
+    manifest = tmp_path / "pilot.csv"
+    pd.DataFrame([{"slide_id": "u1", "tumour_type": "Haemangioblastoma", "role": "heldout"}]).to_csv(manifest, index=False)
+    monkeypatch.setattr("sys.argv", ["extract", str(manifest), "--out", str(tmp_path / "f"), "--tmp", str(tmp_path)])
+    with pytest.raises(RuntimeError):
+        extract.main()
+    assert calls == ["v1.0/Haemangioblastoma/u1.ndpi", ("https://signed/x", False)]
