@@ -107,3 +107,37 @@ def test_extract_end_to_end_with_stand_in_model(tmp_path, monkeypatch):
     d = torch.load(tmp_path / "feats" / "s1.pt", weights_only=False)
     assert d["features"].shape[1] == 2560 and len(d["features"]) == len(d["coords"]) > 0
     assert slide.exists()  # local files given via 'path' are never deleted
+
+
+def test_openset_detector_scores_far_slides_higher():
+    from brainpath.openset import SCORES, OpenSetDetector
+
+    rng = np.random.default_rng(0)
+    centers = rng.normal(size=(3, 32)) * 3
+    X = np.concatenate([c + rng.normal(size=(8, 32)) for c in centers])
+    y = np.repeat(["A", "B", "C"], 8)
+    det = OpenSetDetector(pca_dim=8).fit(X, y)
+    near = det.score(centers[0] + rng.normal(size=(5, 32)))
+    far = det.score(rng.normal(size=(5, 32)) * 3 + 10)
+    assert set(near) == set(SCORES)
+    assert all(far[n].mean() > near[n].mean() for n in SCORES)
+
+
+def test_openset_rotation_separates_unseen_types(tmp_path, monkeypatch):
+    from brainpath import openset
+
+    slides = synthetic_slides()
+    assert openset.rotations(slides) == [["R1"], ["R2"], ["H"]]
+    table, scores, per_rotation = openset.run(slides, n_splits=3)
+    assert set(table.score) == set(openset.SCORES)
+    assert (table.auroc_mean > 0.9).all()
+    assert (table.known_flagged_mean <= 0.2).all()
+    assert set(scores.hidden) == {"R1", "R2", "H"}
+    assert all(r["known_accuracy"] > 0.9 for r in per_rotation)
+
+    for s in slides:
+        torch.save({"features": s["features"].half(), "slide_id": s["slide_id"], "tumour_type": s["tumour_type"],
+                    "role": s["role"], "meta": {}}, tmp_path / f"{s['slide_id']}.pt")
+    monkeypatch.setattr("sys.argv", ["openset", str(tmp_path), "--out", str(tmp_path / "out"), "--folds", "3"])
+    openset.main()
+    assert (tmp_path / "out" / "openset_summary.csv").exists()
