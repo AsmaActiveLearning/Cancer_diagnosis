@@ -238,3 +238,17 @@ def test_report_llm_text_is_rejected_when_it_contradicts_the_facts():
     assert report.llm_write(f, lambda p: good)[2] == "accepted"
     assert report.llm_write(f, lambda p: bad)[2].startswith("rejected")
     assert report.llm_write(f, lambda p: "no json here")[2].startswith("rejected")
+
+
+def test_report_low_confidence_gives_differential_not_a_diagnosis():
+    from brainpath import report
+
+    row = {"slide_id": "s", "pred": "Glioblastoma, IDH-wildtype", "prob": 0.20, "unknown": False,
+           "top3": [("Glioblastoma, IDH-wildtype", 0.20), ("Pilocytic astrocytoma", 0.20), ("Pituitary adenoma", 0.1)],
+           "unseen_score": 0.1, "unseen_threshold": 0.2, "n_tiles": 10, "typical_tiles": [], "meta": {}}
+    f = report.facts(row, min_prob=0.5)
+    assert f["model_call"] == "indeterminate"
+    assert "Glioblastoma, IDH-wildtype vs Pilocytic astrocytoma" in f["integrated_diagnosis"]
+    md = report.render(f)
+    assert "Indeterminate" in md and "WHO CNS5 entity if confirmed" not in md and "grade 4" not in md
+    assert report.facts(row, min_prob=0.1)["model_call"] == "Glioblastoma, IDH-wildtype"

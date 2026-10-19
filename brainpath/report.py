@@ -159,12 +159,25 @@ def predict_slides(slides, known_keep=0.95, n_typical=5, seed=0):
     return rows
 
 
-def facts(row):
+def lookup(t):
+    return WHO_CNS5.get(t, {"histology": t, "integrated": f"{t}, NOS (not in the WHO CNS5 lookup table)",
+                            "who5": t, "grade": "not assessed", "tests": []})
+
+
+def indeterminate(row):
+    """No single type is likely enough to name: the report gives the differential instead."""
+    diff = [t for t, _ in row["top3"][:2]]
+    tests = list(dict.fromkeys([t for d in diff for t in lookup(d)["tests"]] + ["DNA methylation profiling"]))
+    return {"histology": "Not classified: no tumour type reaches the model's confidence threshold",
+            "integrated": "Indeterminate on H&E (model confidence too low); differential: " + " vs ".join(diff),
+            "who5": "unknown", "grade": "not assessed", "tests": tests}
+
+
+def facts(row, min_prob=0.5):
     """Everything a report may say about one slide, and nothing else."""
     m = row["meta"]
-    entry = UNKNOWN if row["unknown"] else WHO_CNS5.get(row["pred"], {
-        "histology": row["pred"], "integrated": f"{row['pred']}, NOS (not in the WHO CNS5 lookup table)",
-        "who5": row["pred"], "grade": "not assessed", "tests": []})
+    low = not row["unknown"] and row["prob"] < min_prob
+    entry = UNKNOWN if row["unknown"] else indeterminate(row) if low else lookup(row["pred"])
     location = m.get("location")
     if isinstance(location, str):
         location = location.strip("[]").replace("'", "") or None
@@ -172,7 +185,8 @@ def facts(row):
         "slide_id": row["slide_id"],
         "patient": {"age": m.get("age"), "sex": m.get("sex"), "location": location,
                     "laterality": m.get("laterality") if isinstance(m.get("laterality"), str) else None},
-        "model_call": "unknown type" if row["unknown"] else row["pred"],
+        "model_call": "unknown type" if row["unknown"] else "indeterminate" if low else row["pred"],
+        "top_type": row["pred"], "min_probability": min_prob,
         "probability": round(row["prob"], 2),
         "alternatives": [{"type": t, "probability": round(p, 2)} for t, p in row["top3"][1:]],
         "unseen_score": round(row["unseen_score"], 3), "unseen_threshold": round(row["unseen_threshold"], 3),
@@ -192,18 +206,21 @@ def render(f, microscopy=None, comment=None):
     who = [f"{pt['age']:.0f} years" if isinstance(pt["age"], (int, float)) and not np.isnan(pt["age"]) else None,
            pt["sex"] if isinstance(pt["sex"], str) else None]
     site = ", ".join(x for x in (pt["laterality"], pt["location"]) if x) or "not recorded"
-    unknown = f["model_call"] == "unknown type"
+    unknown = f["model_call"] in ("unknown type", "indeterminate")
     if microscopy is None:
         microscopy = (f"Whole-slide H&E, {f['tiles_analysed']} tissue tiles analysed at 20x. "
                       + ("The morphological profile does not match any tumour type known to the model."
-                         if unknown else
+                         if f["model_call"] == "unknown type" else
+                         f"No tumour type reaches the confidence needed for a call: the closest is {f['top_type']} "
+                         f"(p = {f['probability']:.2f}, threshold {f['min_probability']:.2f})."
+                         if f["model_call"] == "indeterminate" else
                          f"The morphological profile is most similar to {f['model_call']} "
                          f"({confidence_words(f['probability'])} confidence, p = {f['probability']:.2f})."))
     if comment is None:
         alt = "; ".join(f"{a['type']} (p = {a['probability']:.2f})" for a in f["alternatives"])
         comment = ((f"Flagged as a possible unseen tumour type: distance to known types "
                     f"{f['unseen_score']:.3f} exceeds the threshold {f['unseen_threshold']:.3f}. "
-                    if unknown else "")
+                    if f["model_call"] == "unknown type" else "")
                    + (f"Differential considered by the model: {alt}. " if alt else "")
                    + "Molecular status cannot be determined from H&E and is not assessed. "
                    + "Representative regions for review (level-0 x, y): "
@@ -275,6 +292,8 @@ def main():
     p.add_argument("features")
     p.add_argument("--out", default="results/reports")
     p.add_argument("--known-keep", type=float, default=0.95, help="share of known slides the unseen threshold accepts")
+    p.add_argument("--min-prob", type=float, default=0.5,
+                   help="below this top probability the report is 'indeterminate' and gives the differential")
     p.add_argument("--llm", default=None, help="optional Hugging Face model id for prose (GPU), e.g. google/medgemma-27b-text-it")
     args = p.parse_args()
 
@@ -284,7 +303,7 @@ def main():
     generate = hf_generator(args.llm) if args.llm else None
     summary = []
     for row in rows:
-        f = facts(row)
+        f = facts(row, args.min_prob)
         micro = comment = None
         status = "template only"
         if generate:
@@ -293,14 +312,17 @@ def main():
         (out / f"{Path(row['slide_id']).stem}.json").write_text(json.dumps(f, indent=2, default=str))
         summary.append({"slide_id": row["slide_id"], "true_type": row["true_type"], "role": row["role"],
                         "model_call": f["model_call"], "probability": f["probability"],
-                        "correct": row["pred"] == row["true_type"] and not row["unknown"],
+                        "top_type": row["pred"], "top_correct": row["pred"] == row["true_type"],
+                        "correct": f["model_call"] == row["true_type"],
+                        "indeterminate": f["model_call"] == "indeterminate",
                         "unknown_flag": row["unknown"], "llm": status})
     df = pd.DataFrame(summary)
     df.to_csv(out / "reports_summary.csv", index=False)
     known = df[df.role != "heldout"]
     held = df[df.role == "heldout"]
     print(f"{len(df)} reports in {out}")
-    print(f"known slides: correct type {known.correct.mean():.0%}, wrongly flagged unknown {known.unknown_flag.mean():.0%}")
+    print(f"known slides: top type right {known.top_correct.mean():.0%}, named and right {known.correct.mean():.0%}, "
+          f"indeterminate {known.indeterminate.mean():.0%}, wrongly flagged unknown {known.unknown_flag.mean():.0%}")
     if len(held):
         print(f"held-out slides flagged unknown: {held.unknown_flag.mean():.0%}")
 
