@@ -112,10 +112,26 @@ What H&E cannot show (IDH, fusions, lineage) is never stated as a finding. The i
 
 The WHO CNS5 lookup table in `brainpath/report.py` should be checked by a neuropathologist. With `--llm google/medgemma-27b-text-it` (or any instruction-tuned model on a GPU), an LLM rewrites the findings and comment from the same facts. Its text is kept only if it repeats the integrated diagnosis correctly.
 
+## 6. Which tiles explain each call
+
+The slide embedding is the mean of its tiles and the classifier is linear, so the score of a type splits exactly into one contribution per tile (the exact Shapley value of each tile). One figure per slide shows:
+- **A**: the slide, each tile coloured by how much it pushed the model towards the type (red) or away from it (blue)
+- **B**: the same tiles in Virchow embedding space (UMAP)
+- **C**: the real H&E tiles that contributed most
+- **D**: inside those tiles, where Virchow looked (class-token attention, last block)
+
+On the laptop, panels A and B need only the features:
+
+```bash
+python -m brainpath.explain features/ --out results/explain/
+```
+
+Panels C and D need the slide again and a GPU for Virchow. Use `notebooks/kaggle_explain.ipynb`: it downloads each chosen slide from EBRAINS, draws the figure and deletes the slide. Each slide also gets a CSV with every tile's coordinates and contribution.
+
 ## Tests
 
 ```bash
-pip install -r requirements-laptop.txt openslide-python openslide-bin tifffile
+pip install -r requirements-laptop.txt openslide-python openslide-bin tifffile timm
 python -m pytest
 ```
 
@@ -131,11 +147,13 @@ brainpath/
   extract.py        download, Virchow v1 features, delete
   prism_report.py   PRISM draft reports
   explore.py        PCA, UMAP, similarity, separability and tile clusters
+  explain.py        per-tile contributions, real top tiles and Virchow attention
   report.py         WHO CNS5 layered draft reports grounded in the classifier
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores
   openset.py        unseen-type detection: five scores, rotating hidden types, thresholds
 notebooks/
   kaggle_extract.ipynb
   explore_embeddings.ipynb
+  kaggle_explain.ipynb
 tests/
 ```
