@@ -85,6 +85,20 @@ def top_tiles(contrib, k=8):
 
 # ----------------------------------------------------------------- slide access
 
+def save_slide_view(thumb, scale, coords, step, top, path):
+    """The slide at full thumbnail resolution, top tiles outlined and numbered, for close reading."""
+    from PIL import ImageDraw
+
+    img = thumb.copy()
+    draw = ImageDraw.Draw(img)
+    s = step / scale
+    for r, j in enumerate(top, 1):
+        x, y = coords[j] / scale
+        draw.rectangle([x, y, x + s, y + s], outline=(11, 11, 11), width=max(2, int(s / 12)))
+        draw.text((x + 4, y + 4), str(r), fill=(11, 11, 11))
+    img.save(path)
+
+
 def find_slide(slide_dir, slide_id):
     if not slide_dir:
         return None
@@ -105,7 +119,7 @@ def read_tiles(path, coords, step, size=224):
     tiles = [slide.read_region((int(x), int(y)), level, (read, read)).convert("RGB").resize((size, size), Image.BILINEAR)
              for x, y in coords]
     w, h = slide.dimensions
-    thumb = slide.get_thumbnail((1600, 1600)).convert("RGB")
+    thumb = slide.get_thumbnail((4000, 4000)).convert("RGB")
     slide.close()
     return tiles, thumb, w / thumb.size[0]
 
@@ -158,43 +172,54 @@ def plot_explanation(slide, contrib, info, xy2d, tiles=None, thumb=None, thumb_s
     top = top_tiles(contrib, k)
     xy = slide["coords"]
 
-    fig = plt.figure(figsize=(15, 9.5), dpi=120)
+    fig = plt.figure(figsize=(18, 10), dpi=130)
     fig.patch.set_facecolor(SURFACE)
-    grid = fig.add_gridspec(2, 4, height_ratios=[1.35, 1], hspace=0.35, wspace=0.3)
+    grid = fig.add_gridspec(2, 6, height_ratios=[1.35, 1], hspace=0.3, wspace=0.35)
+    if step is None:
+        gaps = np.diff(np.unique(xy[:, 0]))
+        step = int(gaps[gaps > 0].min()) if (gaps > 0).any() else 1
 
-    # A: where on the slide
-    ax = fig.add_subplot(grid[0, :2])
-    _style(ax, "A  Tile contributions on the slide")
-    ax.grid(False), ax.set_xticks([]), ax.set_yticks([])
+    # A1: the slide itself, untouched, with the top tiles outlined; A2: the contribution map on it
+    ax_slide = fig.add_subplot(grid[0, 0:2])
+    ax_map = fig.add_subplot(grid[0, 2:4])
+    _style(ax_slide, "A1  The slide (H&E)")
+    _style(ax_map, "A2  Tile contributions on the slide")
+    for a in (ax_slide, ax_map):
+        a.grid(False), a.set_xticks([]), a.set_yticks([])
     if thumb is not None:
-        ax.imshow(thumb)
-        px = xy / thumb_scale
-        s = (step or 1) / thumb_scale
+        px, s = xy / thumb_scale, step / thumb_scale
+        x0, y0 = np.maximum(px.min(0) - 3 * s, 0)  # crop to the tissue so it fills the panel
+        x1, y1 = np.minimum(px.max(0) + 4 * s, thumb.size)
+        crop = thumb.crop((int(x0), int(y0), int(x1), int(y1)))
+        px = px - (int(x0), int(y0))
+        ax_slide.imshow(crop)
+        ax_map.imshow(crop, alpha=0.6)
         for (x, y), v in zip(px, contrib):
-            ax.add_patch(Rectangle((x, y), s, s, color=cmap(norm(v)), alpha=0.55, linewidth=0))
+            ax_map.add_patch(Rectangle((x, y), s, s, color=cmap(norm(v)), alpha=0.75, linewidth=0))
         for r, j in enumerate(top, 1):
-            ax.annotate(str(r), (px[j, 0] + s / 2, px[j, 1] + s / 2), color=INK, fontsize=8, ha="center",
-                        va="center", weight="bold")
+            ax_slide.add_patch(Rectangle(px[j], s, s, fill=False, edgecolor=INK, linewidth=1.2))
+            ax_slide.annotate(str(r), px[j], xytext=(2, -2), textcoords="offset points", color=INK,
+                              fontsize=7, weight="bold", ha="left", va="top")
+            ax_map.annotate(str(r), px[j] + s / 2, color=INK, fontsize=8, ha="center", va="center", weight="bold")
     else:  # no slide file: draw each tile as a square of its true size on the slide grid
-        if step is None:
-            gaps = np.diff(np.unique(xy[:, 0]))
-            step = int(gaps[gaps > 0].min()) if (gaps > 0).any() else 1
+        ax_slide.text(0.5, 0.5, "The slide image needs the slide file:\nrun with --slides (Kaggle notebook)",
+                      ha="center", va="center", color=INK_2, fontsize=9, transform=ax_slide.transAxes)
         for (x, y), v in zip(xy, contrib):
-            ax.add_patch(Rectangle((x, y), step, step, color=cmap(norm(v)), linewidth=0))
+            ax_map.add_patch(Rectangle((x, y), step, step, color=cmap(norm(v)), linewidth=0))
         for r, j in enumerate(top, 1):
-            ax.annotate(str(r), xy[j] + step / 2, color=INK, fontsize=8, ha="center", va="center", weight="bold")
-        ax.set_xlim(xy[:, 0].min() - step, xy[:, 0].max() + 2 * step)
-        ax.set_ylim(xy[:, 1].max() + 2 * step, xy[:, 1].min() - step)
-        ax.set_aspect("equal")
+            ax_map.annotate(str(r), xy[j] + step / 2, color=INK, fontsize=8, ha="center", va="center", weight="bold")
+        ax_map.set_xlim(xy[:, 0].min() - step, xy[:, 0].max() + 2 * step)
+        ax_map.set_ylim(xy[:, 1].max() + 2 * step, xy[:, 1].min() - step)
+        ax_map.set_aspect("equal")
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    cb = fig.colorbar(sm, cax=ax.inset_axes([1.02, 0.1, 0.025, 0.8]), format="%.2f%%")
+    cb = fig.colorbar(sm, cax=ax_map.inset_axes([1.03, 0.1, 0.03, 0.8]), format="%.2f%%")
     cb.ax.set_title("towards\nthe type", color=INK_2, fontsize=7)
     cb.ax.set_xlabel("away", color=INK_2, fontsize=7)
     cb.ax.tick_params(labelsize=7, colors=INK_2)
 
     # B: where in embedding space
-    ax = fig.add_subplot(grid[0, 2:])
-    _style(ax, "B  The same tiles in Virchow embedding space (2-D)")
+    ax = fig.add_subplot(grid[0, 4:])
+    _style(ax, "B  The same tiles in Virchow embedding space")
     ax.set_xticks([]), ax.set_yticks([])
     order = np.argsort(np.abs(contrib))
     ax.scatter(xy2d[order, 0], xy2d[order, 1], c=contrib[order], cmap=cmap, norm=norm, s=8, linewidths=0)
@@ -284,6 +309,7 @@ def main():
             fetched = True
         if path:
             tiles, thumb, scale = read_tiles(path, s["coords"][top], step)
+            save_slide_view(thumb, scale, s["coords"], step, top, out / f"{stem}_slide.png")
             if not args.no_attention:
                 if model is None:
                     from brainpath.extract import load_virchow

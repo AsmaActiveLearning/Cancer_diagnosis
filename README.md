@@ -115,7 +115,8 @@ The WHO CNS5 lookup table in `brainpath/report.py` should be checked by a neurop
 ## 6. Which tiles explain each call
 
 The slide embedding is the mean of its tiles and the classifier is linear, so the score of a type splits exactly into one contribution per tile (the exact Shapley value of each tile). One figure per slide shows:
-- **A**: the slide, each tile coloured by how much it pushed the model towards the type (red) or away from it (blue)
+- **A1**: the slide itself (H&E), cropped to the tissue, with the top tiles outlined; a full-resolution copy is saved as `<slide>_slide.png`
+- **A2**: the same slide, each tile coloured by how much it pushed the model towards the type (red) or away from it (blue)
 - **B**: the same tiles in Virchow embedding space (UMAP)
 - **C**: the real H&E tiles that contributed most
 - **D**: inside those tiles, where Virchow looked (class-token attention, last block)
