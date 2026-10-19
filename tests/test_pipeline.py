@@ -238,3 +238,33 @@ def test_report_llm_text_is_rejected_when_it_contradicts_the_facts():
     assert report.llm_write(f, lambda p: good)[2] == "accepted"
     assert report.llm_write(f, lambda p: bad)[2].startswith("rejected")
     assert report.llm_write(f, lambda p: "no json here")[2].startswith("rejected")
+
+
+def test_explain_contributions_add_up_and_figure_has_all_panels(tmp_path, monkeypatch):
+    import tifffile
+    import timm
+    from brainpath import explain, explore
+
+    _write_synthetic_features(tmp_path / "features")
+    slides = explore.load(tmp_path / "features")
+    i = next(k for k, s in enumerate(slides) if s["slide_id"] == "A_0")
+    contrib, info = explain.tile_contributions(slides, i)
+    assert info["target"] == "A" and np.isclose(contrib.sum() + info["bias"], info["score"])
+
+    # A small tiled TIFF stands in for the .ndpi slide, a tiny ViT for Virchow.
+    rng = np.random.default_rng(0)
+    img = (rng.random((1300, 2400, 3)) * 255).astype(np.uint8)
+    (tmp_path / "slides").mkdir()
+    tifffile.imwrite(tmp_path / "slides" / "A_0.tiff", img, tile=(256, 256), photometric="rgb")
+    vit = timm.create_model("vit_tiny_patch16_224", pretrained=False).eval()
+    from timm.data import resolve_data_config
+    from timm.data.transforms_factory import create_transform
+    monkeypatch.setattr("brainpath.extract.load_virchow",
+                        lambda device: (vit, create_transform(**resolve_data_config({}, model=vit))))
+    monkeypatch.setattr("sys.argv", ["explain", str(tmp_path / "features"), "--out", str(tmp_path / "out"),
+                                     "--only", "A_0", "--slides", str(tmp_path / "slides"), "--top", "4"])
+    explain.main()
+    assert (tmp_path / "out" / "A_0_explain.png").exists()
+    tiles = pd.read_csv(tmp_path / "out" / "A_0_tiles.csv")
+    assert len(tiles) == len(slides[i]["features"])
+    return tmp_path / "out" / "A_0_explain.png"
