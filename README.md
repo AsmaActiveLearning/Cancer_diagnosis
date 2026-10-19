@@ -96,6 +96,22 @@ This hides each rare and held-out type in turn, fits a detector on the remaining
 
 Use `--rotate all` to also hide each common type once, or `--rotate heldout` for the single held-out split.
 
+## 5. Draft neuropathology reports (laptop)
+
+```bash
+python -m brainpath.report features/ --out results/reports/
+```
+
+This writes one Markdown and one JSON file per slide. Each report follows the WHO CNS5 layered format from the ICCR dataset: integrated diagnosis, histopathological classification, CNS WHO grade, molecular information, microscopic findings and comment. Every field comes from facts the pipeline can show:
+- the tumour type and its probability, from a classifier that never saw the slide
+- an "unknown type" flag for slides far from every known type
+- the most typical tiles, with their coordinates on the slide
+- age, sex and location from the annotation file
+
+What H&E cannot show (IDH, fusions, lineage) is never stated as a finding. The integrated diagnosis is given as NOS, with the tests to request.
+
+The WHO CNS5 lookup table in `brainpath/report.py` should be checked by a neuropathologist. With `--llm google/medgemma-27b-text-it` (or any instruction-tuned model on a GPU), an LLM rewrites the findings and comment from the same facts. Its text is kept only if it repeats the integrated diagnosis correctly.
+
 ## Tests
 
 ```bash
@@ -115,6 +131,7 @@ brainpath/
   extract.py        download, Virchow v1 features, delete
   prism_report.py   PRISM draft reports
   explore.py        PCA, UMAP, similarity, separability and tile clusters
+  report.py         WHO CNS5 layered draft reports grounded in the classifier
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores
   openset.py        unseen-type detection: five scores, rotating hidden types, thresholds
 notebooks/
