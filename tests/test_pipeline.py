@@ -194,3 +194,47 @@ def test_explore_runs_on_synthetic_features(tmp_path, monkeypatch):
     for name in ("pca_variance.png", "map_pca.png", "similarity.png", "nearest_known.png", "tile_clusters.png"):
         assert (out / name).exists()
     assert len(list(out.glob("tilemap_*.png"))) == 6
+
+
+def _write_synthetic_features(feat_dir, names=None):
+    feat_dir.mkdir(parents=True, exist_ok=True)
+    for s in synthetic_slides(dim=24):
+        n = len(s["features"])
+        coords = np.stack(np.meshgrid(np.arange(10), np.arange(5)), -1).reshape(-1, 2)[:n] * 224
+        t = (names or {}).get(s["tumour_type"], s["tumour_type"])
+        torch.save({"features": s["features"].half(), "coords": torch.from_numpy(coords).int(),
+                    "slide_id": s["slide_id"], "tumour_type": t, "role": s["role"],
+                    "meta": {"age": 54.0, "sex": "female", "location": "['frontal']", "laterality": "left"}},
+                   feat_dir / f"{s['slide_id']}.pt")
+
+
+def test_report_flags_heldout_and_uses_who_template(tmp_path, monkeypatch):
+    from brainpath import report
+
+    names = {"A": "Glioblastoma, IDH-wildtype", "B": "Pilocytic astrocytoma", "C": "Pituitary adenoma",
+             "R1": "Immature teratoma", "R2": "Leiomyosarcoma", "H": "Haemangioblastoma"}
+    _write_synthetic_features(tmp_path / "features", names)
+    monkeypatch.setattr("sys.argv", ["report", str(tmp_path / "features"), "--out", str(tmp_path / "out")])
+    report.main()
+
+    summary = pd.read_csv(tmp_path / "out" / "reports_summary.csv")
+    assert len(summary) == 28
+    known = summary[summary.role != "heldout"]
+    assert known.correct.mean() > 0.9 and known.unknown_flag.mean() <= 0.1
+    assert summary[summary.role == "heldout"].unknown_flag.all()
+    gbm = (tmp_path / "out" / "A_0.md").read_text()
+    for section in ("Integrated diagnosis", "CNS WHO grade", "Molecular information", "RESEARCH DRAFT"):
+        assert section in gbm
+    assert "Glioblastoma, NOS (IDH status not assessed)" in gbm and "CNS WHO grade 4" in gbm and "54 years, female" in gbm and "left, frontal" in gbm
+    assert "not recognised" in (tmp_path / "out" / "H_0.md").read_text()
+
+
+def test_report_llm_text_is_rejected_when_it_contradicts_the_facts():
+    from brainpath import report
+
+    f = {"integrated_diagnosis": "Hemangioblastoma"}
+    good = '{"microscopy": "m", "comment": "Integrated diagnosis: Hemangioblastoma. ok"}'
+    bad = '{"microscopy": "m", "comment": "Integrated diagnosis: Glioblastoma"}'
+    assert report.llm_write(f, lambda p: good)[2] == "accepted"
+    assert report.llm_write(f, lambda p: bad)[2].startswith("rejected")
+    assert report.llm_write(f, lambda p: "no json here")[2].startswith("rejected")
