@@ -214,13 +214,13 @@ def test_report_flags_heldout_and_uses_who_template(tmp_path, monkeypatch):
     names = {"A": "Glioblastoma, IDH-wildtype", "B": "Pilocytic astrocytoma", "C": "Pituitary adenoma",
              "R1": "Immature teratoma", "R2": "Leiomyosarcoma", "H": "Haemangioblastoma"}
     _write_synthetic_features(tmp_path / "features", names)
-    monkeypatch.setattr("sys.argv", ["report", str(tmp_path / "features"), "--out", str(tmp_path / "out")])
+    monkeypatch.setattr("sys.argv", ["report", str(tmp_path / "features"), "--out", str(tmp_path / "out"), "--min-prob", "0"])
     report.main()
 
     summary = pd.read_csv(tmp_path / "out" / "reports_summary.csv")
     assert len(summary) == 28
     known = summary[summary.role != "heldout"]
-    assert known.correct.mean() > 0.9 and known.unknown_flag.mean() <= 0.1
+    assert known.top_correct.mean() > 0.9 and known.unknown_flag.mean() <= 0.1
     assert summary[summary.role == "heldout"].unknown_flag.all()
     gbm = (tmp_path / "out" / "A_0.md").read_text()
     for section in ("Integrated diagnosis", "CNS WHO grade", "Molecular information", "RESEARCH DRAFT"):
