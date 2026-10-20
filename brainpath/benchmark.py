@@ -43,6 +43,36 @@ from brainpath.train import l2norm
 L2 = FunctionTransformer(l2norm)
 
 
+def slide_classifier(n_train, seed=0):
+    """The default slide classifier, chosen with this benchmark on the 42-slide pilot (2026-10-20).
+
+    Standardise, PCA to 32 dimensions, then logistic regression. It gives probabilities
+    and stays linear in the mean embedding, so explain.py can split its score exactly
+    into per-tile contributions.
+    """
+    return make_pipeline(StandardScaler(), PCA(n_components=max(1, min(32, n_train - 1)), random_state=seed),
+                         LogisticRegression(C=0.1, max_iter=3000))
+
+
+def linear_form(model, dim):
+    """Weights W (types x dim) and bias b with logits = x @ W.T + b, for any linear pipeline."""
+    b = np.atleast_1d(model.decision_function(np.zeros((1, dim)))[0])
+    W = (np.atleast_2d(model.decision_function(np.eye(dim)).reshape(dim, -1)) - b).T
+    if W.shape[0] == 1:  # two classes: sklearn keeps one logit
+        W, b = np.vstack([-W[0] / 2, W[0] / 2]), np.array([-b[0] / 2, b[0] / 2])
+    return W, b
+
+
+def train_mask(slides, i, known):
+    """Known slides that may train the model for slide i: never slide i or its patient's other slides."""
+    pat = slides[i]["meta"].get("pat_id")
+    mask = known.copy()
+    mask[i] = False
+    if pat is not None and not (isinstance(pat, float) and np.isnan(pat)):
+        mask &= np.array([s["meta"].get("pat_id") != pat for s in slides])
+    return mask
+
+
 def embeddings(slides, kind):
     if kind == "mean":
         return np.stack([s["features"].mean(0) for s in slides]).astype(np.float64)

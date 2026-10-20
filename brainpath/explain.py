@@ -1,14 +1,14 @@
 """Which tiles, and which pixels in them, made the model call a slide's tumour type.
 
-The slide embedding is the mean of its tile embeddings (L2-normalised) and the
-classifier is linear, so the score of a type splits exactly into one term per
-tile:
-    logit_c - mean_k logit_k  =  sum_i  (w_c - mean_k w_k) . t_i / (n |mean t|)  +  bias term
+The slide embedding is the mean of its tile embeddings and the classifier
+(standardise, PCA, logistic regression; see benchmark.slide_classifier) is
+linear in it, so the score of a type splits exactly into one term per tile:
+    logit_c - mean_k logit_k  =  sum_i  (w_c - mean_k w_k) . t_i / n  +  bias term
 Each term is that tile's contribution: positive tiles push the slide towards
 the type, negative ones away from it. For a linear model on a mean this is the
 exact Shapley value of each tile; no sampling or approximation is involved.
-The classifier is refit without the slide being explained (leave-one-out), as in
-report.py.
+The classifier is refit without the slide being explained and without other
+slides of the same patient, as in report.py.
 
 One figure per slide, four panels:
   A  slide thumbnail (or the tile grid) with each tile coloured by contribution
@@ -31,8 +31,7 @@ import numpy as np
 import pandas as pd
 
 from brainpath.explore import INK, INK_2, SURFACE, _save, _style, embed_2d, load
-from brainpath.openset import OpenSetDetector
-from brainpath.train import l2norm
+from brainpath.benchmark import linear_form, slide_classifier, train_mask
 
 # Diverging blue <-> red from the reference palette; grey midpoint means "no effect".
 DIVERGING = ["#104281", "#6da7ec", "#f0efec", "#ec8a89", "#a32524"]
@@ -50,12 +49,11 @@ def tile_contributions(slides, i, target=None, seed=0):
     slide's relative logit for the target type.
     """
     known = np.array([s["role"] != "heldout" for s in slides])
-    mask = known.copy()
-    mask[i] = False
-    emb = l2norm(np.stack([s["features"].mean(0) for s in slides]).astype(np.float64))
+    mask = train_mask(slides, i, known)
+    emb = np.stack([s["features"].mean(0) for s in slides]).astype(np.float64)
     types = np.array([s["tumour_type"] for s in slides])
-    det = OpenSetDetector(seed=seed).fit(emb[mask], types[mask])
-    clf, classes = det.clf_, list(det.classes_)
+    clf = slide_classifier(int(mask.sum()), seed).fit(emb[mask], types[mask])
+    classes = list(clf.classes_)
 
     probs = clf.predict_proba(emb[i:i + 1])[0]
     pred = classes[int(np.argmax(probs))]
@@ -63,16 +61,14 @@ def tile_contributions(slides, i, target=None, seed=0):
     if target not in classes:  # a held-out type has no weights: explain the prediction instead
         target = pred
     c = classes.index(target)
-    W, b = clf.coef_, clf.intercept_
-    if W.shape[0] == 1:  # two classes: sklearn keeps one row
-        W, b = np.vstack([-W[0] / 2, W[0] / 2]), np.array([-b[0] / 2, b[0] / 2])
+    W, b = linear_form(clf, emb.shape[1])
     w = W[c] - W.mean(0)
 
     T = slides[i]["features"].astype(np.float64)
-    scale = len(T) * np.linalg.norm(T.mean(0))
-    contrib = T @ w / scale
+    contrib = T @ w / len(T)
     bias = float(b[c] - b.mean())
-    check = float(emb[i] @ w + bias)
+    logits = clf.decision_function(emb[i:i + 1]).ravel()
+    check = float(logits[c] - logits.mean()) if len(logits) > 1 else float(contrib.sum() + bias)
     assert np.isclose(contrib.sum() + bias, check), "contributions must add up to the score"
     return contrib, {"target": target, "pred": pred, "prob_target": float(probs[c]),
                      "prob_pred": float(probs.max()), "bias": bias, "score": check,

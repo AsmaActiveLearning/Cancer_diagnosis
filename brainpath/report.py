@@ -42,6 +42,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from brainpath.benchmark import slide_classifier, train_mask
 from brainpath.explore import load
 from brainpath.openset import OpenSetDetector
 from brainpath.train import l2norm
@@ -109,27 +110,29 @@ UNKNOWN = {"histology": "Unclassified by the model", "integrated": "Tumour type 
 
 def predict_slides(slides, known_keep=0.95, n_typical=5, seed=0):
     """Type, probabilities, unseen flag and typical tiles for every slide, without leakage."""
-    emb = l2norm(np.stack([s["features"].mean(0) for s in slides]).astype(np.float64))
+    raw = np.stack([s["features"].mean(0) for s in slides]).astype(np.float64)
+    emb = l2norm(raw)
     known = np.array([s["role"] != "heldout" for s in slides])
     types = np.array([s["tumour_type"] for s in slides])
 
     def fit(mask):
-        return OpenSetDetector(seed=seed).fit(emb[mask], types[mask])
+        # Type and probabilities from the benchmark's classifier; unseen score and centroids from the detector.
+        clf = slide_classifier(int(mask.sum()), seed).fit(raw[mask], types[mask])
+        return clf, OpenSetDetector(seed=seed).fit(emb[mask], types[mask])
 
-    # Leave-one-out for known slides; one fit on all known slides for held-out ones.
+    # Known slides: fit without the slide and its patient. Held-out slides: one fit on all known slides.
     known_score = {}
     results = {}
     full = fit(known)
     for i in range(len(slides)):
         if known[i]:
-            mask = known.copy()
-            mask[i] = False
+            mask = train_mask(slides, i, known)
             if len(set(types[mask])) < 2:
                 continue
-            det = fit(mask)
+            clf, det = fit(mask)
         else:
-            det = full
-        probs = det.clf_.predict_proba(emb[i:i + 1])[0]
+            clf, det = full
+        probs = clf.predict_proba(raw[i:i + 1])[0]
         score = det.score(emb[i:i + 1])["prototype"][0]
         results[i] = (det, probs, score)
         if known[i]:
