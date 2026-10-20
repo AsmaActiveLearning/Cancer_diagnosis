@@ -141,7 +141,8 @@ def test_openset_rotation_separates_unseen_types(tmp_path, monkeypatch):
                     "role": s["role"], "meta": {}}, tmp_path / f"{s['slide_id']}.pt")
     monkeypatch.setattr("sys.argv", ["openset", str(tmp_path), "--out", str(tmp_path / "out"), "--folds", "3"])
     openset.main()
-    assert (tmp_path / "out" / "openset_summary.csv").exists()
+    summary = pd.read_csv(tmp_path / "out" / "openset_summary.csv")
+    assert set(summary.prep) == {"l2", "std"} and len(summary) == 2 * len(openset.SCORES)
 
 
 def test_ebrains_object_name_matches_atlas_layout():
