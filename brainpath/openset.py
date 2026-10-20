@@ -23,7 +23,10 @@ The threshold is set from known slides only (so that --known-keep of them are
 accepted), which is how it would be set for slides of truly new types.
 
 Example:
-  python -m brainpath.openset features/ --out results/openset/ --patient-col patient_id
+  python -m brainpath.openset features/ --out results/openset/ --patient-col pat_id
+
+By default every score is computed twice: on L2-normalised embeddings, and on
+embeddings standardised per dimension first (--prep l2/std/both).
 """
 
 import argparse
@@ -38,6 +41,7 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.preprocessing import StandardScaler
 
 from brainpath.train import l2norm, load_features
 
@@ -47,11 +51,20 @@ SCORES = ("msp", "energy", "mahalanobis", "knn", "prototype")
 class OpenSetDetector:
     """Fit on known slide embeddings; score() returns unseen scores (higher = more likely unseen)."""
 
-    def __init__(self, knn_k=1, pca_dim=32, C=1.0, seed=0):
-        self.knn_k, self.pca_dim, self.C, self.seed = knn_k, pca_dim, C, seed
+    def __init__(self, knn_k=1, pca_dim=32, C=1.0, seed=0, standardize=False):
+        self.knn_k, self.pca_dim, self.C, self.seed, self.standardize = knn_k, pca_dim, C, seed, standardize
+
+    def _prep(self, X):
+        """Optionally standardise each dimension (fit on known slides), then L2-normalise."""
+        X = np.asarray(X, dtype=np.float64)
+        if self.standardize:
+            X = self.scaler_.transform(X)
+        return l2norm(X)
 
     def fit(self, X, y):
-        X = l2norm(np.asarray(X, dtype=np.float64))
+        if self.standardize:
+            self.scaler_ = StandardScaler().fit(np.asarray(X, dtype=np.float64))
+        X = self._prep(X)
         y = np.asarray(y)
         self.classes_ = np.unique(y)
         if len(self.classes_) < 2:
@@ -69,10 +82,10 @@ class OpenSetDetector:
         return self
 
     def predict(self, X):
-        return self.clf_.predict(l2norm(np.asarray(X, dtype=np.float64)))
+        return self.clf_.predict(self._prep(X))
 
     def score(self, X):
-        X = l2norm(np.asarray(X, dtype=np.float64))
+        X = self._prep(X)
         logits = self.clf_.decision_function(X)
         if logits.ndim == 1:  # two known types: sklearn returns one logit
             logits = np.stack([np.zeros_like(logits), logits], 1)
@@ -188,11 +201,21 @@ def main():
     p.add_argument("--knn-k", type=int, default=1)
     p.add_argument("--pca-dim", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--prep", choices=["l2", "std", "both"], default="both",
+                   help="embedding preparation: L2 only, standardise then L2, or compare both")
     args = p.parse_args()
 
     slides = load_features(args.features, args.patient_col)
-    table, scores, per_rotation = run(slides, args.rotate, n_splits=args.folds, known_keep=args.known_keep,
-                                      seed=args.seed, knn_k=args.knn_k, pca_dim=args.pca_dim)
+    tables, all_scores, per_rotation = [], [], []
+    for prep in (["l2", "std"] if args.prep == "both" else [args.prep]):
+        t, sc, rot = run(slides, args.rotate, n_splits=args.folds, known_keep=args.known_keep, seed=args.seed,
+                         knn_k=args.knn_k, pca_dim=args.pca_dim, standardize=prep == "std")
+        tables.append(t.assign(prep=prep))
+        all_scores.append(sc.assign(prep=prep))
+        per_rotation += [{**r, "prep": prep} for r in rot]
+    table = pd.concat(tables).sort_values("auroc_mean", ascending=False, ignore_index=True)
+    table = table[["prep"] + [c for c in table.columns if c != "prep"]]
+    scores = pd.concat(all_scores, ignore_index=True)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     table.to_csv(out / "openset_summary.csv", index=False)
