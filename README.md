@@ -96,6 +96,14 @@ This hides each rare and held-out type in turn, fits a detector on the remaining
 
 Use `--rotate all` to also hide each common type once, or `--rotate heldout` for the single held-out split.
 
+## 4b. Compare classifiers (laptop)
+
+```bash
+python -m brainpath.benchmark features/ --out results/benchmark/
+```
+
+Leave-one-patient-out accuracy and balanced accuracy on the known types for several slide classifiers (logistic regression with and without standardisation and tuned C, PCA, nearest neighbour, nearest centroid, linear SVM) on mean and mean+max slide embeddings. Use it to pick the classifier for reports and explanations.
+
 ## 5. Draft neuropathology reports (laptop)
 
 ```bash
@@ -148,6 +156,7 @@ brainpath/
   extract.py        download, Virchow v1 features, delete
   prism_report.py   PRISM draft reports
   explore.py        PCA, UMAP, similarity, separability and tile clusters
+  benchmark.py      leave-one-patient-out comparison of slide classifiers
   explain.py        per-tile contributions, real top tiles and Virchow attention
   report.py         WHO CNS5 layered draft reports grounded in the classifier
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores

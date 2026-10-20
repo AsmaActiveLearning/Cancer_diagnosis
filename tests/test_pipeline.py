@@ -268,3 +268,15 @@ def test_explain_contributions_add_up_and_figure_has_all_panels(tmp_path, monkey
     tiles = pd.read_csv(tmp_path / "out" / "A_0_tiles.csv")
     assert len(tiles) == len(slides[i]["features"])
     return tmp_path / "out" / "A_0_explain.png"
+
+
+def test_benchmark_compares_classifiers_leave_one_patient_out(tmp_path, monkeypatch):
+    from brainpath import benchmark
+
+    _write_synthetic_features(tmp_path / "features")
+    monkeypatch.setattr("sys.argv", ["benchmark", str(tmp_path / "features"), "--out", str(tmp_path / "out")])
+    benchmark.main()
+    table = pd.read_csv(tmp_path / "out" / "benchmark.csv")
+    assert len(table) == 12 and table.balanced_accuracy.max() > 0.9
+    preds = pd.read_csv(tmp_path / "out" / "benchmark_predictions.csv")
+    assert "H" not in set(preds.true)  # held-out types are never trained or scored here
