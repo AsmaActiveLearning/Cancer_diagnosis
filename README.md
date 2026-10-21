@@ -137,6 +137,14 @@ python -m brainpath.explain features/ --out results/explain/
 
 Panels C and D need the slide again and a GPU for Virchow. Use `notebooks/kaggle_explain.ipynb`: it downloads each chosen slide from EBRAINS, draws the figure and deletes the slide. Each slide also gets a CSV with every tile's coordinates and contribution.
 
+## 7. Unseen types: which are caught, which are not
+
+```bash
+python -m brainpath.ood_explain features/ --out results/ood/
+```
+
+Each rare or held-out type is hidden from training in turn and scored with the standardised prototype score. Types are grouped by AUROC as far-OOD (>= 0.9, unlike every known type), intermediate (0.7-0.9) and near-OOD (< 0.7, looks like a known type). `ood_overview.png` shows every hidden type's slide scores against the known slides. One figure per type (the median slide, or every slide with `--all`) shows tile novelty, the closest known type per tile, the slide's tiles among known tiles in Virchow space, its score against the threshold, the most novel tiles and Virchow's attention in them (with `--slides`, as in the Kaggle notebook), and a caption interpreting the figure from its numbers.
+
 ## Tests
 
 ```bash
@@ -157,6 +165,7 @@ brainpath/
   prism_report.py   PRISM draft reports
   explore.py        PCA, UMAP, similarity, separability and tile clusters
   benchmark.py      leave-one-patient-out comparison of slide classifiers
+  ood_explain.py    figures for unseen types: far-OOD, intermediate, near-OOD
   explain.py        per-tile contributions, real top tiles and Virchow attention
   report.py         WHO CNS5 layered draft reports grounded in the classifier
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores
