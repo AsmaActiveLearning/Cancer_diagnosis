@@ -54,7 +54,7 @@ class OpenSetDetector:
     def __init__(self, knn_k=1, pca_dim=32, C=1.0, seed=0, standardize=False):
         self.knn_k, self.pca_dim, self.C, self.seed, self.standardize = knn_k, pca_dim, C, seed, standardize
 
-    def _prep(self, X):
+    def prep(self, X):
         """Optionally standardise each dimension (fit on known slides), then L2-normalise."""
         X = np.asarray(X, dtype=np.float64)
         if self.standardize:
@@ -64,7 +64,7 @@ class OpenSetDetector:
     def fit(self, X, y):
         if self.standardize:
             self.scaler_ = StandardScaler().fit(np.asarray(X, dtype=np.float64))
-        X = self._prep(X)
+        X = self.prep(X)
         y = np.asarray(y)
         self.classes_ = np.unique(y)
         if len(self.classes_) < 2:
@@ -82,10 +82,10 @@ class OpenSetDetector:
         return self
 
     def predict(self, X):
-        return self.clf_.predict(self._prep(X))
+        return self.clf_.predict(self.prep(X))
 
     def score(self, X):
-        X = self._prep(X)
+        X = self.prep(X)
         logits = self.clf_.decision_function(X)
         if logits.ndim == 1:  # two known types: sklearn returns one logit
             logits = np.stack([np.zeros_like(logits), logits], 1)
