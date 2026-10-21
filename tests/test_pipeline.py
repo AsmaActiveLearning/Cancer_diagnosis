@@ -281,3 +281,30 @@ def test_benchmark_compares_classifiers_leave_one_patient_out(tmp_path, monkeypa
     assert len(table) == 12 and table.balanced_accuracy.max() > 0.9
     preds = pd.read_csv(tmp_path / "out" / "benchmark_predictions.csv")
     assert "H" not in set(preds.true)  # held-out types are never trained or scored here
+
+
+def test_ood_explain_groups_hidden_types_and_draws_figures(tmp_path, monkeypatch):
+    import json
+
+    import tifffile
+    import timm
+    from timm.data import resolve_data_config
+    from timm.data.transforms_factory import create_transform
+
+    from brainpath import ood_explain
+
+    _write_synthetic_features(tmp_path / "features")
+    (tmp_path / "slides").mkdir()
+    img = (np.random.default_rng(0).random((1300, 2400, 3)) * 255).astype(np.uint8)
+    tifffile.imwrite(tmp_path / "slides" / "H_0.tiff", img, tile=(256, 256), photometric="rgb")
+    vit = timm.create_model("vit_tiny_patch16_224", pretrained=False).eval()
+    monkeypatch.setattr("brainpath.extract.load_virchow",
+                        lambda device: (vit, create_transform(**resolve_data_config({}, model=vit))))
+    monkeypatch.setattr("sys.argv", ["ood", str(tmp_path / "features"), "--out", str(tmp_path / "out"),
+                                     "--rotate", "heldout", "--all", "--slides", str(tmp_path / "slides"),
+                                     "--known-tiles", "20"])
+    ood_explain.main()
+    summary = json.loads((tmp_path / "out" / "ood_summary.json").read_text())
+    assert {r["hidden"] for r in summary} == {"H"} and len(summary) == 4
+    assert all(r["category"] == "far-OOD" and r["flagged"] for r in summary)
+    assert (tmp_path / "out" / "ood_overview.png").exists() and len(list((tmp_path / "out").glob("far-OOD_*.png"))) == 4
