@@ -306,15 +306,19 @@ def main():
     p.add_argument("--slides", default=None, help="folder with slide files, for the H&E panels")
     p.add_argument("--download", action="store_true", help="fetch missing slides from EBRAINS into --slides")
     p.add_argument("--no-attention", action="store_true")
+    p.add_argument("--cache", default=None, help="where H&E tiles and attention are kept between runs "
+                   "(default: <out>/cache)")
+    p.add_argument("--refresh", action="store_true", help="ignore the cache and read the slides again")
     p.add_argument("--known-tiles", type=int, default=80, help="tiles per known slide in the embedding plot")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
-    from brainpath.explain import attention_maps, find_slide, read_tiles
+    from brainpath.explain import attention_maps, find_slide, load_cached, read_tiles, save_cached
 
     slides = load(args.features)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    cache = Path(args.cache) if args.cache else out / "cache"
     results = [analyse_type(slides, hidden, args.seed) for (hidden,) in rotations(slides, args.rotate)]
     plot_overview(results, out / "ood_overview.png")  # first, so a failed download cannot lose it
     print(f"wrote {out / 'ood_overview.png'}")
@@ -345,10 +349,16 @@ def main():
                 gaps = np.diff(np.unique(s["coords"][:, 0]))
                 step = int(gaps[gaps > 0].min())
             tiles = thumb = scale = maps = None
-            path = find_slide(args.slides, sid)
+            top = np.argsort(novelty)[::-1][:6]
+            cached = None if args.refresh else load_cached(cache, stem, "ood", s["coords"][top],
+                                                           not args.no_attention)
+            path = None if cached else find_slide(args.slides, sid)
             fetched = False
             try:
-                if path is None and args.download and args.slides:
+                if cached:
+                    print(f"  {stem}: H&E tiles and attention from the cache, no download")
+                    tiles, thumb, scale, maps = cached
+                elif path is None and args.download and args.slides:
                     from brainpath import ebrains
                     from brainpath.extract import download
                     Path(args.slides).mkdir(parents=True, exist_ok=True)
@@ -357,7 +367,6 @@ def main():
                     fetched = True
                     download(ebrains.signed_url(ebrains.object_name(s["tumour_type"], sid)), path, auth=False)
                 if path:
-                    top = np.argsort(novelty)[::-1][:6]
                     tiles, thumb, scale = read_tiles(path, s["coords"][top], step)
                     if not args.no_attention:
                         if model is None:
@@ -365,6 +374,7 @@ def main():
                             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                             model, transform = load_virchow(device)
                         maps = attention_maps(model, transform, tiles, device)
+                    save_cached(cache, stem, "ood", s["coords"][top], tiles, thumb, scale, maps)
             except Exception as e:  # keep going: the figure is drawn without the H&E panels
                 print(f"  {stem}: could not read the slide ({type(e).__name__}: {e}); drawing without H&E panels")
                 tiles = thumb = scale = maps = None
