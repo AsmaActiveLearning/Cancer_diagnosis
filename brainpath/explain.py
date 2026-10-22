@@ -18,6 +18,11 @@ One figure per slide, four panels:
 Panels A-B need only the feature files (laptop). C needs the slide file
 (--slides), and D also needs Virchow and a GPU (Kaggle) unless --no-attention.
 
+The H&E tiles, thumbnail and attention maps of each slide are saved in --cache
+(default: <out>/cache) the first time, so later runs redraw the figure without
+downloading the slide or running Virchow again. Delete a slide's files there,
+or pass --refresh, to compute them again.
+
 Examples:
   laptop:  python -m brainpath.explain features/ --out results/explain/
   Kaggle:  python -m brainpath.explain features/ --out results/explain/ --slides /kaggle/tmp/ --download --only <slide_id>
@@ -118,6 +123,39 @@ def read_tiles(path, coords, step, size=224):
     thumb = slide.get_thumbnail((4000, 4000)).convert("RGB")
     slide.close()
     return tiles, thumb, w / thumb.size[0]
+
+
+def load_cached(cache, stem, tag, coords, attention):
+    """Tiles, thumbnail, scale and attention maps saved by an earlier run, or None.
+
+    Only used when they were read at the same tile positions (the top tiles can
+    change if the features or classifier change) and include attention if asked for.
+    """
+    from PIL import Image
+
+    if not cache:
+        return None
+    f, jpg = Path(cache) / f"{stem}_{tag}.npz", Path(cache) / f"{stem}_thumb.jpg"
+    if not (f.exists() and jpg.exists()):
+        return None
+    d = np.load(f)
+    if d["coords"].shape != coords.shape or not np.array_equal(d["coords"], coords):
+        return None
+    if attention and d["maps"].size == 0:
+        return None
+    tiles = [Image.fromarray(t) for t in d["tiles"]]
+    maps = d["maps"] if d["maps"].size else None
+    return tiles, Image.open(jpg).convert("RGB"), float(d["scale"]), maps
+
+
+def save_cached(cache, stem, tag, coords, tiles, thumb, scale, maps):
+    if not cache:
+        return
+    Path(cache).mkdir(parents=True, exist_ok=True)
+    thumb.save(Path(cache) / f"{stem}_thumb.jpg", quality=90)
+    np.savez_compressed(Path(cache) / f"{stem}_{tag}.npz", coords=coords, scale=scale,
+                        tiles=np.stack([np.asarray(t) for t in tiles]),
+                        maps=np.asarray(maps if maps is not None else []))
 
 
 # ----------------------------------------------------------------- attention
@@ -265,6 +303,9 @@ def main():
     p.add_argument("--download", action="store_true",
                    help="fetch missing slides from EBRAINS into --slides (needs EBRAINS_TOKEN), deleted after use")
     p.add_argument("--no-attention", action="store_true", help="skip Virchow attention (panel D)")
+    p.add_argument("--cache", default=None, help="where H&E tiles and attention are kept between runs "
+                   "(default: <out>/cache)")
+    p.add_argument("--refresh", action="store_true", help="ignore the cache and read the slides again")
     p.add_argument("--target", default=None, help="type to explain (default: the slide's true type)")
     p.add_argument("--top", type=int, default=8)
     p.add_argument("--seed", type=int, default=0)
@@ -273,6 +314,7 @@ def main():
     slides = load(args.features)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    cache = Path(args.cache) if args.cache else out / "cache"
     wanted = {Path(str(s)).stem for s in args.only} if args.only else None
     model = None
     rows = []
@@ -293,9 +335,15 @@ def main():
             gaps = np.diff(np.unique(s["coords"][:, 0]))
             step = int(gaps[gaps > 0].min())
         tiles = thumb = scale = maps = None
-        path = find_slide(args.slides, s["slide_id"])
+        cached = None if args.refresh else load_cached(cache, stem, "explain", s["coords"][top],
+                                                       not args.no_attention)
+        path = None if cached else find_slide(args.slides, s["slide_id"])
         fetched = False
-        if path is None and args.download and args.slides:
+        if cached:
+            print(f"{stem}: H&E tiles and attention from the cache, no download")
+            tiles, thumb, scale, maps = cached
+            save_slide_view(thumb, scale, s["coords"], step, top, out / f"{stem}_slide.png")
+        elif path is None and args.download and args.slides:
             from brainpath import ebrains
             from brainpath.extract import download
             Path(args.slides).mkdir(parents=True, exist_ok=True)
@@ -312,9 +360,10 @@ def main():
                     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                     model, transform = load_virchow(device)
                 maps = attention_maps(model, transform, tiles, device)
+            save_cached(cache, stem, "explain", s["coords"][top], tiles, thumb, scale, maps)
             if fetched:
                 Path(path).unlink()
-        elif args.slides:
+        elif args.slides and not cached:
             print(f"{stem}: slide file not found in {args.slides}, panels C-D left out")
 
         plot_explanation(s, contrib, info, xy2d, tiles, thumb, scale, maps, step, args.top,

@@ -268,6 +268,17 @@ def test_explain_contributions_add_up_and_figure_has_all_panels(tmp_path, monkey
     assert (tmp_path / "out" / "A_0_explain.png").exists()
     tiles = pd.read_csv(tmp_path / "out" / "A_0_tiles.csv")
     assert len(tiles) == len(slides[i]["features"])
+
+    # Second run: the slide is gone and Virchow is unavailable, the cache is enough.
+    assert (tmp_path / "out" / "cache" / "A_0_explain.npz").exists()
+    (tmp_path / "slides" / "A_0.tiff").unlink()
+    (tmp_path / "out" / "A_0_explain.png").unlink()
+
+    def no_model(device):
+        raise AssertionError("Virchow should not be loaded when the cache has the attention")
+    monkeypatch.setattr("brainpath.extract.load_virchow", no_model)
+    explain.main()
+    assert (tmp_path / "out" / "A_0_explain.png").exists()
     return tmp_path / "out" / "A_0_explain.png"
 
 
