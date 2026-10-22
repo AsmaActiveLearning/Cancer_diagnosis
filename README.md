@@ -137,6 +137,8 @@ python -m brainpath.explain features/ --out results/explain/
 
 Panels C and D need the slide again and a GPU for Virchow. Use `notebooks/kaggle_explain.ipynb`: it downloads each chosen slide from EBRAINS, draws the figure and deletes the slide. Each slide also gets a CSV with every tile's coordinates and contribution.
 
+The H&E tiles, thumbnail and attention maps are saved in `<out>/cache` the first time, so re-running redraws the figure without downloading the slide or running Virchow again (`--refresh` forces a new read). To keep the cache across Kaggle sessions, save a version of the notebook and add its output as an input: the notebook copies any earlier `cache` folder back.
+
 ## 7. Unseen types: which are caught, which are not
 
 ```bash
@@ -170,6 +172,8 @@ brainpath/
   report.py         WHO CNS5 layered draft reports grounded in the classifier
   train.py          mean-pool and ABMIL classifiers, prototypes, unseen-type scores
   openset.py        unseen-type detection: five scores, rotating hidden types, thresholds
+talk/
+  talk.tex, talk.pdf  English Beamer talk on the pilot (build: pdflatex talk.tex, twice)
 notebooks/
   kaggle_extract.ipynb
   explore_embeddings.ipynb
