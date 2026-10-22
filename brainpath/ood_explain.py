@@ -315,11 +315,13 @@ def main():
     slides = load(args.features)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    results, summary = [], []
+    results = [analyse_type(slides, hidden, args.seed) for (hidden,) in rotations(slides, args.rotate)]
+    plot_overview(results, out / "ood_overview.png")  # first, so a failed download cannot lose it
+    print(f"wrote {out / 'ood_overview.png'}")
+    summary = []
     model = None
-    for (hidden,) in rotations(slides, args.rotate):
-        res = analyse_type(slides, hidden, args.seed)
-        results.append(res)
+    for res in results:
+        hidden = res["hidden"]
         sc = res["scores"]
         mine = sc[sc.status == "unseen"].sort_values("prototype")
         chosen = mine.slide_id.tolist() if args.all else [mine.slide_id.iloc[len(mine) // 2]]
@@ -345,24 +347,29 @@ def main():
             tiles = thumb = scale = maps = None
             path = find_slide(args.slides, sid)
             fetched = False
-            if path is None and args.download and args.slides:
-                from brainpath import ebrains
-                from brainpath.extract import download
-                Path(args.slides).mkdir(parents=True, exist_ok=True)
-                path = str(Path(args.slides) / f"{stem}.ndpi")
-                print(f"  {stem}: downloading the slide from EBRAINS")
-                download(ebrains.signed_url(ebrains.object_name(s["tumour_type"], sid)), path, auth=False)
-                fetched = True
-            if path:
-                top = np.argsort(novelty)[::-1][:6]
-                tiles, thumb, scale = read_tiles(path, s["coords"][top], step)
-                if not args.no_attention:
-                    if model is None:
-                        from brainpath.extract import load_virchow
-                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                        model, transform = load_virchow(device)
-                    maps = attention_maps(model, transform, tiles, device)
-                if fetched:
+            try:
+                if path is None and args.download and args.slides:
+                    from brainpath import ebrains
+                    from brainpath.extract import download
+                    Path(args.slides).mkdir(parents=True, exist_ok=True)
+                    path = str(Path(args.slides) / f"{stem}.ndpi")
+                    print(f"  {stem}: downloading the slide from EBRAINS")
+                    fetched = True
+                    download(ebrains.signed_url(ebrains.object_name(s["tumour_type"], sid)), path, auth=False)
+                if path:
+                    top = np.argsort(novelty)[::-1][:6]
+                    tiles, thumb, scale = read_tiles(path, s["coords"][top], step)
+                    if not args.no_attention:
+                        if model is None:
+                            from brainpath.extract import load_virchow
+                            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                            model, transform = load_virchow(device)
+                        maps = attention_maps(model, transform, tiles, device)
+            except Exception as e:  # keep going: the figure is drawn without the H&E panels
+                print(f"  {stem}: could not read the slide ({type(e).__name__}: {e}); drawing without H&E panels")
+                tiles = thumb = scale = maps = None
+            finally:
+                if fetched and path and Path(path).exists():
                     Path(path).unlink()
 
             name = f"{res['category']}_{hidden}_{stem}".replace(" ", "_").replace(",", "")
@@ -373,7 +380,7 @@ def main():
                             "flagged": score > res["threshold"], "novel_tile_share": novel_share,
                             "closest_known": dict(counts.round(3)), "caption": caption})
             print(f"  {stem}: {'flagged' if score > res['threshold'] else 'not flagged'} -> {name}.png")
-    plot_overview(results, out / "ood_overview.png")
+            (out / "ood_summary.json").write_text(json.dumps(summary, indent=2, default=str))
     (out / "ood_summary.json").write_text(json.dumps(summary, indent=2, default=str))
 
 
