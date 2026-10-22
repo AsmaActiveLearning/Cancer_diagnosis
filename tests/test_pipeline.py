@@ -319,3 +319,41 @@ def test_ood_explain_groups_hidden_types_and_draws_figures(tmp_path, monkeypatch
     assert {r["hidden"] for r in summary} == {"H"} and len(summary) == 4
     assert all(r["category"] == "far-OOD" and r["flagged"] for r in summary)
     assert (tmp_path / "out" / "ood_overview.png").exists() and len(list((tmp_path / "out").glob("far-OOD_*.png"))) == 4
+
+
+def test_ebrains_link_retries_timeouts_and_explain_survives_a_failed_download(tmp_path, monkeypatch):
+    import requests
+
+    from brainpath import ebrains, explain
+
+    calls = []
+
+    class Answer:
+        status_code, headers = 200, {"content-type": "application/json"}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"url": "https://signed"}
+
+    def flaky_get(*a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise requests.ReadTimeout("slow")
+        return Answer()
+
+    monkeypatch.setenv("EBRAINS_TOKEN", "t")
+    monkeypatch.setattr(requests, "get", flaky_get)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    assert ebrains.signed_url("v1.0/x/y.ndpi") == "https://signed" and len(calls) == 3
+
+    def always_slow(*a, **k):
+        raise requests.ReadTimeout("slow")
+    monkeypatch.setattr(requests, "get", always_slow)
+    _write_synthetic_features(tmp_path / "features")
+    monkeypatch.setattr("sys.argv", ["explain", str(tmp_path / "features"), "--out", str(tmp_path / "out"),
+                                     "--only", "A_0", "B_0", "--slides", str(tmp_path / "slides"), "--download"])
+    explain.main()  # both downloads fail, both figures are still drawn with panels A-B
+    assert (tmp_path / "out" / "A_0_explain.png").exists() and (tmp_path / "out" / "B_0_explain.png").exists()
+    assert not list((tmp_path / "slides").glob("*.ndpi"))

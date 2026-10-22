@@ -35,12 +35,30 @@ def auth_headers():
     return {"Authorization": f"Bearer {token}"}
 
 
-def signed_url(obj, dataset=ATLAS_DATASET):
-    """Ask the data proxy for a temporary download link to one file."""
+def signed_url(obj, dataset=ATLAS_DATASET, tries=4):
+    """Ask the data proxy for a temporary download link to one file.
+
+    The proxy is sometimes slow to answer, so timeouts, dropped connections and
+    5xx errors are retried after 10, 20 and 40 s.
+    """
+    import time
+
     import requests
 
-    r = requests.get(f"{API}/{dataset}/{quote(obj)}", params={"redirect": "false"},
-                     headers=auth_headers(), timeout=60)
+    for attempt in range(tries):
+        try:
+            r = requests.get(f"{API}/{dataset}/{quote(obj)}", params={"redirect": "false"},
+                             headers=auth_headers(), timeout=120)
+            if r.status_code < 500 or attempt == tries - 1:
+                break
+            reason = f"HTTP {r.status_code}"
+        except (requests.Timeout, requests.ConnectionError) as e:
+            if attempt == tries - 1:
+                raise
+            reason = type(e).__name__
+        wait = 10 * 2 ** attempt
+        print(f"  EBRAINS did not answer ({reason}), retrying in {wait} s")
+        time.sleep(wait)
     if r.status_code in (401, 403):
         raise SystemExit(f"EBRAINS refused the token ({r.status_code}): log in again and refresh EBRAINS_TOKEN, "
                          "and check that you accepted the dataset's terms")

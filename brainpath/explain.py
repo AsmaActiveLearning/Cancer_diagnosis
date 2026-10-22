@@ -343,27 +343,33 @@ def main():
             print(f"{stem}: H&E tiles and attention from the cache, no download")
             tiles, thumb, scale, maps = cached
             save_slide_view(thumb, scale, s["coords"], step, top, out / f"{stem}_slide.png")
-        elif path is None and args.download and args.slides:
-            from brainpath import ebrains
-            from brainpath.extract import download
-            Path(args.slides).mkdir(parents=True, exist_ok=True)
-            path = str(Path(args.slides) / f"{stem}.ndpi")
-            print(f"{stem}: downloading the slide from EBRAINS")
-            download(ebrains.signed_url(ebrains.object_name(s["tumour_type"], s["slide_id"])), path, auth=False)
-            fetched = True
-        if path:
-            tiles, thumb, scale = read_tiles(path, s["coords"][top], step)
-            save_slide_view(thumb, scale, s["coords"], step, top, out / f"{stem}_slide.png")
-            if not args.no_attention:
-                if model is None:
-                    from brainpath.extract import load_virchow
-                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                    model, transform = load_virchow(device)
-                maps = attention_maps(model, transform, tiles, device)
-            save_cached(cache, stem, "explain", s["coords"][top], tiles, thumb, scale, maps)
-            if fetched:
+        try:
+            if not cached and path is None and args.download and args.slides:
+                from brainpath import ebrains
+                from brainpath.extract import download
+                Path(args.slides).mkdir(parents=True, exist_ok=True)
+                path = str(Path(args.slides) / f"{stem}.ndpi")
+                print(f"{stem}: downloading the slide from EBRAINS")
+                fetched = True
+                download(ebrains.signed_url(ebrains.object_name(s["tumour_type"], s["slide_id"])), path, auth=False)
+            if path:
+                tiles, thumb, scale = read_tiles(path, s["coords"][top], step)
+                save_slide_view(thumb, scale, s["coords"], step, top, out / f"{stem}_slide.png")
+                if not args.no_attention:
+                    if model is None:
+                        from brainpath.extract import load_virchow
+                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                        model, transform = load_virchow(device)
+                    maps = attention_maps(model, transform, tiles, device)
+                save_cached(cache, stem, "explain", s["coords"][top], tiles, thumb, scale, maps)
+        except Exception as e:  # keep going: this figure is drawn without the H&E panels, rerun later for them
+            print(f"{stem}: could not get the slide ({type(e).__name__}: {e}); drawing panels A-B only, "
+                  "rerun this slide later for C-D")
+            tiles = thumb = scale = maps = None
+        finally:
+            if fetched and path and Path(path).exists():
                 Path(path).unlink()
-        elif args.slides and not cached:
+        if args.slides and not cached and path is None:
             print(f"{stem}: slide file not found in {args.slides}, panels C-D left out")
 
         plot_explanation(s, contrib, info, xy2d, tiles, thumb, scale, maps, step, args.top,
